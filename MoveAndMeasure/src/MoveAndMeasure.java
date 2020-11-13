@@ -23,7 +23,7 @@ public class MoveAndMeasure {
 		int travelTime = 10000;
 		int iterations = travelTime / sampleRate;
 		
-		rightWheel.setPower(50);
+		/*rightWheel.setPower(50);
 		leftWheel.setPower(50);
 		
 		for(int i = 0; i < iterations; i++) {
@@ -35,7 +35,7 @@ public class MoveAndMeasure {
 			
 			Delay.msDelay(sampleRate);
 		}
-		
+		*/
 		rightWheel.stop();
 		leftWheel.stop();
 		
