@@ -1,10 +1,13 @@
 import lejos.hardware.port.SensorPort;
 import lejos.hardware.sensor.EV3ColorSensor;
 import lejos.hardware.sensor.SensorMode;
+import lejos.utility.Delay;
 
 public class LineCheckThread extends Thread{
 
-	int currentLine = 10; // 0 is the black line, +1 for each blue line, -1 for each green line
+	public static int NO_LINE = 10;
+	
+	int currentLine = NO_LINE; // 0 is the black line, +1 for each blue line, -1 for each green line
 	int team = 0; //1 for blue, -1 for green
 	boolean lineDetected = false;
 	
@@ -14,16 +17,21 @@ public class LineCheckThread extends Thread{
 	
 	private boolean running = true;
 	
+	private EV3ColorSensor colorSensor;
+	
 	public int getCurrentLine() {
 		return currentLine;
 	}
 	
 	public void setDirection(int direction){
-		
+		this.direction = direction;
 	}
-	public void run() {
-		EV3ColorSensor colorSensor = new EV3ColorSensor(SensorPort.S2);
-		
+	
+	public void setColorSensor(EV3ColorSensor colorSensor) {
+		this.colorSensor = colorSensor;
+	}
+	
+	public void run() {		
 		SensorMode rgbMode = colorSensor.getRGBMode();
 		float[] rgbSample = new float[rgbMode.sampleSize()];
 		float red = 0.0f;
@@ -37,6 +45,7 @@ public class LineCheckThread extends Thread{
 			blue = rgbSample[2];
 			
 			if(green >= colorThreshold && red < colorThreshold && blue < colorThreshold && !lineDetected) {
+				//System.out.println("Green detected!");
 				//Green line detected!
 				if(team == 0) { //First green line detected, update team and start at line -3
 					team = -1;
@@ -50,6 +59,7 @@ public class LineCheckThread extends Thread{
 				}
 			}
 			else if(blue >= colorThreshold && red < colorThreshold && green < colorThreshold && !lineDetected) {
+				//System.out.println("Blue Detected!");
 				//Blue line detected!
 				if(team == 0) { //First blue line detected, update team and start at line 3
 					team = 1;
@@ -62,8 +72,10 @@ public class LineCheckThread extends Thread{
 					}
 				}
 			}else {
+				//System.out.println("Black Detected!");
 				//Black line detected?
 			}
+			Delay.msDelay(10);
 		}
 	}
 	
