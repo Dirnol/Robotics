@@ -23,7 +23,7 @@ public class ReadLineMap {
 			Line[] lines = map.getLines();
 			System.out.println(lines.length);
 			for(Line l : lines) {
-				System.out.println(l.toString());
+				System.out.println("(" + l.x1 + ", " + l.y1 + ") to (" + l.x2 + ", " + l.y2 + ")");
 			}
 			printRect(map.getBoundingRect());
 		} catch (FileNotFoundException e) {

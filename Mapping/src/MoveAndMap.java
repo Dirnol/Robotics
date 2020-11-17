@@ -17,6 +17,8 @@ import lejos.robotics.SampleProvider;
 import lejos.robotics.chassis.Chassis;
 import lejos.robotics.chassis.Wheel;
 import lejos.robotics.chassis.WheeledChassis;
+import lejos.robotics.geometry.Line;
+import lejos.robotics.geometry.Rectangle;
 import lejos.robotics.localization.CompassPoseProvider;
 import lejos.robotics.localization.OdometryPoseProvider;
 import lejos.robotics.localization.PoseProvider;
@@ -41,13 +43,18 @@ import lejos.utility.GyroDirectionFinder;
 
 public class MoveAndMap {
 
-    public static final float MAX_DISTANCE = 0.27f;
+    public static final float MAX_DISTANCE = 0.25f;
     public static final int DETECTOR_DELAY = 100;
     public static final int BOARD_WIDTH = 48;
     public static final int BOARD_LENGTH = 56;
     public static final float ROBOT_WIDTH = 6.5f;
     public static final float ROBOT_LENGTH = 9.5f;
-    
+    public static final float ULTRA_TO_CENTER_DIST = 3.0f; //UPDATE
+    public static final float OBSTACLE_DIAMETER = 3.0f; //estimated based on project description
+    public static final Rectangle BOUNDS = new Rectangle(0,0,BOARD_WIDTH,BOARD_LENGTH);
+    public static final float DIST_BETWEEN_LINES = 6.0f; //VERIFY
+    public static final Waypoint GOAL_ONE = new Waypoint(7, 32.5, 180);
+    public static final Waypoint GOAL_TWO = new Waypoint(2, 15, 180); //unreachable with current setup
     
     private Wheel wheel1, wheel2;
     private EV3GyroSensor gyroSensor;
@@ -68,7 +75,10 @@ public class MoveAndMap {
     private LineCheckThread lineCheckThread;
     
     private Waypoint home = new Waypoint(0.0, 0.0, 0);
+    private Waypoint currentWaypoint;
     private boolean movingHome = false;
+    
+    private boolean detectingObstacle = false;
 	
 	public static void main(String[] args) {
 		
@@ -100,8 +110,8 @@ public class MoveAndMap {
 		chassis = new WheeledChassis(new Wheel[] { wheel1, wheel2 }, WheeledChassis.TYPE_DIFFERENTIAL);
 		
 		 pilot = new MovePilot(chassis);
-		 //pilot.setAngularSpeed(45);
-		 //pilot.setLinearSpeed(10);
+		 pilot.setAngularSpeed(45);
+		 pilot.setLinearSpeed(5);
 		 gyroAdapter = new GyroscopeAdapter(gyroProvider, 1);
 		 gyroFinder = new GyroDirectionFinder(gyroAdapter);
 		 opp = new OdometryPoseProvider(pilot);
@@ -111,7 +121,7 @@ public class MoveAndMap {
 		 
 		 lineMap = readLineMap();
 		 pathFinder = new ShortestPathFinder(lineMap);
-		 
+		 pathFinder.lengthenLines(3.0f);
 		 
 		 nav = new Navigator(pilot, opp);
 		 
@@ -119,26 +129,24 @@ public class MoveAndMap {
             public void featureDetected(Feature feature, FeatureDetector detector) {
                 if (pilot.isMoving() && pilot.getMovement().getMoveType() != MoveType.ROTATE) {
                 	System.out.println("Obstacle Detected!");
-                    if (nav.isMoving()) 
+                	System.out.println(feature.getRangeReading().getRange() + "   " + feature.getRangeReading().getAngle());
+                	detectingObstacle = true;
+                    if (nav.isMoving()) {
                     	nav.stop();
-                    
-                    /*try {
-						Path homePath = pathFinder.findRoute(opp.getPose(), home, lineMap);
-						nav.followPath(homePath);
-					} catch (DestinationUnreachableException e) {
-						System.out.println(e.getMessage());
-						//e.printStackTrace();
-					}*/
-                    
+                    	nav.clearPath();
+                    }
+                    float[] center = locateFeatureCenter(); //feature center in x,y coordinates
+                    while(center == null) {
+                    	Delay.msDelay(100);
+                    }
+                    addObstacleToMap(center);
+                    reroute();     
+                    nav.waitForStop();
+                    detectingObstacle = false;
                 }                   
             }       
 	     });
-		 
-		 /*EV3NavigationModel model = new EV3NavigationModel();
-		 model.addPoseProvider(opp);
-		 model.addPilot(pilot);
-		 model.addNavigator(nav);
-		 model.addFeatureDetector(detector);*/
+
 		 detector.enableDetection(true);
 		 detector.setPoseProvider(opp);
 		 
@@ -149,15 +157,143 @@ public class MoveAndMap {
 		
 	}
 	
+	private void reroute() {
+		try {
+			Path newPath = pathFinder.findRoute(nav.getPoseProvider().getPose(), currentWaypoint, lineMap);
+			nav.clearPath();
+			nav.followPath(newPath);
+			nav.waitForStop();
+		} catch (DestinationUnreachableException e) {
+			if(currentWaypoint == home) {
+				System.out.println("We're Stuck!");
+				close();
+				System.exit(0);
+			}
+			currentWaypoint = home;
+			reroute();
+		}
+	}
+	
+	// Assume we are already pointed somewhere at the feature, 
+	// and the feature is roughly equal width and length
+	// begin rotating to the left and right, record angles at which
+	// detection stopped on both sides
+	// assume object diameter is roughly 3" based on project description
+	// use middle angle plus overall distance to locate center
+	private float[] locateFeatureCenter() {
+		
+		System.out.println("CURRENT POSE");
+		printPose();
+		
+		float[] center = new float[2];
+		float threshold = 3.0f;
+		float originalAngle = getAngle();
+		
+		float newDist = getUltraDistance();
+		
+		while(newDist < threshold) {
+			preciseRelativeRotate(-1.0f);
+			newDist = getUltraDistance();
+		}
+		float leftAngle = getAngle();
+		
+		preciseRotateTo(originalAngle);
+		
+		newDist = getUltraDistance();
+		while(newDist < threshold) {
+			preciseRelativeRotate(1.0f);
+			newDist = getUltraDistance();
+		}
+		float rightAngle = getAngle();
+		
+		float centerAngle = (leftAngle + rightAngle) / 2.0f;
+		preciseRotateTo(centerAngle);
+		
+		System.out.println("CENTER ANGLE " + centerAngle);
+		
+		float measuredDist = this.getDistanceAverage(10);
+		
+		System.out.println("MEASURED DIST " + measuredDist);
+		
+		float totalDist = measuredDist + ULTRA_TO_CENTER_DIST + (OBSTACLE_DIAMETER/2.0f);
+		float x1 = nav.getPoseProvider().getPose().getX();
+		float y1 = nav.getPoseProvider().getPose().getY();
+		
+		System.out.println("TOTAL DIST " + totalDist);
+		
+		//trig to figure out new x and y coords
+		float xDist = (float) (totalDist * Math.sin(centerAngle));
+		if(!movingHome)
+			xDist = Math.abs(xDist);
+		else
+			xDist = -Math.abs(xDist);
+		
+		float yDist = (float) (totalDist * Math.cos(centerAngle));
+		
+		float x2 = x1 + xDist;
+		float y2 = y1 + yDist;
+		
+		System.out.println("X DIST " + xDist + "   YDIST " + yDist);
+		
+		center[0] = x2;
+		center[1] = y2;
+		
+		
+		return center;
+	}
+	
+	private void addObstacleToMap(float[] center) {
+		float xCord = center[0];
+		float yCord = center[1];
+		float radius = OBSTACLE_DIAMETER / 2.0f;
+		//add 4 lines for the feature to make a box
+		Line top = new Line(xCord-radius, yCord-radius, xCord+radius, yCord-radius);
+		Line right = new Line(xCord-radius, yCord-radius, xCord-radius, yCord+radius);
+		Line left = new Line(xCord+radius, yCord-radius, xCord+radius, yCord+radius);
+		Line bot = new Line(xCord-radius, yCord+radius, xCord+radius, yCord+radius);
+		
+		Line[] oldMap = lineMap.getLines();
+		Line[] newMap = new Line[oldMap.length+4];
+		for(int i = 0; i < oldMap.length; i++) {
+			newMap[i] = oldMap[i];
+		}
+		int ind = oldMap.length;
+		newMap[ind] = top;
+		newMap[ind+1] = right;
+		newMap[ind+2] = left;
+		newMap[ind+3] = bot;
+		
+		lineMap = new LineMap(newMap, BOUNDS);
+		printLineMap();
+		
+	}
+	
 	private void moveToFirstLine() {
 		Path forwardPath = new Path();
 		forwardPath.add(new Waypoint(10,0,0));
 		nav.followPath(forwardPath);
-		while(lineCheckThread.getCurrentLine() == LineCheckThread.NO_LINE) {
+		while(!lineCheckThread.newLineFound()) {
 			Delay.msDelay(10);
 		}
 		nav.stop();
 		nav.clearPath();
+	}
+	
+	private void moveToNextLine() {
+		if(!movingHome) {
+			preciseRotateTo(0.0f);
+			Waypoint nextLine = new Waypoint(
+					nav.getPoseProvider().getPose().getX()+DIST_BETWEEN_LINES,
+					nav.getPoseProvider().getPose().getY());
+			Path p = new Path();
+			p.add(nextLine);
+			while(!lineCheckThread.newLineFound() || lineCheckThread.onSameLine()) {
+				Delay.msDelay(10);
+			}
+			nav.stop();
+			nav.clearPath();
+			
+		}
 	}
 	
 	private void preciseRotateTo(float newAngle) {
@@ -177,6 +313,12 @@ public class MoveAndMap {
 		}
 	}
 	
+	private void preciseRelativeRotate(float rotateAngle) {
+		float angle = getAngle();
+		angle += rotateAngle;
+		preciseRotateTo(angle);
+	}
+	
 	public void waitForButtonPress() {
 		Thread buttonThread = new Thread() {
 			@Override
@@ -189,9 +331,12 @@ public class MoveAndMap {
 		buttonThread.start();
 	}
 	
-	private void getBearings() {
+	private void getBearings(int lineNum) {
 		
-		moveToFirstLine();
+		if(lineNum == 1)
+			moveToFirstLine();
+		else
+			moveToNextLine();
 		
 		preciseRotateTo(90);
 		float rightDist = getDistanceAverage(10);
@@ -201,13 +346,15 @@ public class MoveAndMap {
 		System.out.println(rightDist);
 		System.out.println(leftDist);
 		
-		if(leftDist + rightDist + ROBOT_LENGTH >= BOARD_WIDTH) {
-			//no obstacles!
+		if(leftDist + rightDist + ROBOT_LENGTH <= BOARD_WIDTH) {
+			//obstacle is blocking one of the walls move to next line and try again
+			
 			
 		}
 		float offset = (BOARD_WIDTH - (rightDist + leftDist)) / 2;
 		float y_position = leftDist + offset;
 		float x_position = 8.5f; //distance from beginning to first line on either side of the board - wheel offset 
+		x_position += (lineNum-1) * DIST_BETWEEN_LINES;
 		
 		opp.setPose(new Pose(x_position, y_position, -90));
 		nav.setPoseProvider(opp);
@@ -219,24 +366,43 @@ public class MoveAndMap {
 	
 	public void test(){
 		
-		
-		getBearings();
 
+		getBearings(1);
+		getBearings(2);
+/*
 		try {
-			Path newPath = new Path();
-			Waypoint boardMiddle = new Waypoint(BOARD_WIDTH/2, BOARD_LENGTH/2, 0);
-			newPath.add(boardMiddle);
-			nav.followPath(pathFinder.findRoute(nav.getPoseProvider().getPose(), boardMiddle));
-			nav.waitForStop();
-			System.out.println(nav.getPoseProvider().getPose());
+			Waypoint boardMiddle = new Waypoint(BOARD_LENGTH/2, BOARD_WIDTH/2, 0);
+			System.out.println("GOING TO MIDDLE");
+			nav.clearPath();
+			
+			nav.followPath(pathFinder.findRoute(nav.getPoseProvider().getPose(), boardMiddle, lineMap));
+			currentWaypoint = boardMiddle;
+			/*while(!nav.pathCompleted() || detectingObstacle) {}
+			System.out.println("GOING TO GOAL");
+			nav.clearPath();
+			printPose();
+			nav.followPath(pathFinder.findRoute(nav.getPoseProvider().getPose(), GOAL_ONE, lineMap));
+			currentWaypoint = GOAL_ONE;
+			while(!nav.pathCompleted() || detectingObstacle) {}
+			System.out.println("GOING TO MIDDLE");
+			nav.clearPath();
+			printPose();
+			nav.followPath(pathFinder.findRoute(nav.getPoseProvider().getPose(), boardMiddle, lineMap));
+			currentWaypoint = boardMiddle;
+			while(!nav.pathCompleted() || detectingObstacle) {}
+			nav.clearPath();
+			System.out.println("DONE");
+
 		}catch(DestinationUnreachableException e) {
 			
 		}
-
+		//close();
+		//System.exit(0);*/
 		
-		close();
-		System.exit(0);
-		
+	}
+	
+	private void printPose() {
+		System.out.println(nav.getPoseProvider().getPose());
 	}
 	
 	public float getUltraDistance() {		
@@ -290,6 +456,12 @@ public class MoveAndMap {
 		}
 		return null;
 
+	}
+	
+	private void printLineMap() {
+		for(Line l : lineMap.getLines()) {
+			System.out.println("(" + l.x1 + ", " + l.y1 + ") to (" + l.x2 + ", " + l.y2 + ")");
+		}
 	}
 	
 	public float getAngle() {

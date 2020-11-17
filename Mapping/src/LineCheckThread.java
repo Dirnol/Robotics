@@ -11,6 +11,9 @@ public class LineCheckThread extends Thread{
 	int team = 0; //1 for blue, -1 for green
 	boolean lineDetected = false;
 	
+	boolean newLineDetected = false;
+	boolean onSameLine = false;
+	
 	private int direction = 1; //1 is going toward blue goal, //-1 going toward green goal
 	
 	private float colorThreshold = 0.060f;
@@ -31,6 +34,18 @@ public class LineCheckThread extends Thread{
 		this.colorSensor = colorSensor;
 	}
 	
+	public void resetNewLine() {
+		newLineDetected = false;
+	}
+	
+	public boolean newLineFound() {
+		return newLineDetected;
+	}
+	
+	public boolean onSameLine() {
+		return !newLineDetected;
+	}
+	
 	public void run() {		
 		SensorMode rgbMode = colorSensor.getRGBMode();
 		float[] rgbSample = new float[rgbMode.sampleSize()];
@@ -44,7 +59,9 @@ public class LineCheckThread extends Thread{
 			green = rgbSample[1];
 			blue = rgbSample[2];
 			
-			if(green >= colorThreshold && red < colorThreshold && blue < colorThreshold && !lineDetected) {
+			if(green >= colorThreshold && red < colorThreshold && blue < colorThreshold && !newLineDetected) {
+				newLineDetected = true;
+				onSameLine = true;
 				//System.out.println("Green detected!");
 				//Green line detected!
 				if(team == 0) { //First green line detected, update team and start at line -3
@@ -58,7 +75,9 @@ public class LineCheckThread extends Thread{
 					}
 				}
 			}
-			else if(blue >= colorThreshold && red < colorThreshold && green < colorThreshold && !lineDetected) {
+			else if(blue >= colorThreshold && red < colorThreshold && green < colorThreshold && !newLineDetected) {
+				newLineDetected = true;
+				onSameLine = true;
 				//System.out.println("Blue Detected!");
 				//Blue line detected!
 				if(team == 0) { //First blue line detected, update team and start at line 3
@@ -71,7 +90,13 @@ public class LineCheckThread extends Thread{
 						currentLine--;
 					}
 				}
-			}else {
+			}else if(blue < colorThreshold && red < colorThreshold && green < colorThreshold && !newLineDetected){
+				newLineDetected = true;
+				onSameLine = true;
+			}
+			else {
+				newLineDetected = false;
+				onSameLine = false;
 				//System.out.println("Black Detected!");
 				//Black line detected?
 			}
