@@ -1,4 +1,3 @@
-import lejos.hardware.port.SensorPort;
 import lejos.hardware.sensor.EV3ColorSensor;
 import lejos.hardware.sensor.SensorMode;
 import lejos.utility.Delay;
@@ -16,7 +15,7 @@ public class LineCheckThread extends Thread{
 	
 	private int direction = 1; //1 is going toward blue goal, //-1 going toward green goal
 	
-	private float colorThreshold = 0.060f;
+	private float colorThreshold = 0.060f; //Number too large, should be able to detect with smaller number
 	
 	private boolean running = true;
 	
